@@ -176,7 +176,7 @@ custom_css = """
 .feature-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1.5rem;
+    gap: 2rem;
     margin: 2.5rem 0;
 }
 
@@ -457,7 +457,7 @@ def analisar_grade_e_gaps(file_grade):
         gaps_df = pd.DataFrame(gaps)
         total_gap_min = gaps_df['Duração (min)'].sum() if len(gaps_df) > 0 else 0
         
-        # Gráficos minimalistas
+        # Gráficos
         fig1 = px.bar(
             dist_esp, x='Quantidade', y='especialidade',
             title='Distribuição por Especialidade',
@@ -509,7 +509,7 @@ def analisar_grade_e_gaps(file_grade):
         
         resumo = f"""
 <div class="alert-success">
-    <h3 style="margin: 0 0 0.5rem 0; font-size: 1.2rem; color: #166534;">Análise Concluída</h3>
+    <h3 style="margin: 0 0 0.5rem 0; color: #166534;">Análise Concluída</h3>
     <p style="margin: 0; color: #15803d;">Grade processada e gaps identificados com sucesso.</p>
 </div>
 
@@ -574,10 +574,12 @@ def analisar_grade_e_gaps(file_grade):
         return resumo, dist_esp, gaps_df, fig1, fig2, fig3
         
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return f"Erro ao processar: {str(e)}", None, None, None, None, None
 
 # ============================================
-# SISTEMA DE SLOTS
+# SISTEMA DE SLOTS - FUNÇÃO CORRIGIDA
 # ============================================
 
 def criar_grade_com_slots(file_grade):
@@ -585,58 +587,147 @@ def criar_grade_com_slots(file_grade):
         return "Por favor, faça upload da grade cirúrgica.", None, None, None
     
     try:
-        df = processar_grade_cirurgica(file_grade.name)
-        if df is None:
-            return "Erro ao processar o arquivo.", None, None, None
+        print("\n" + "="*60)
+        print("INICIANDO GERAÇÃO DE GRADE DE SLOTS")
+        print("="*60)
         
-        slots_totais = 10
+        df = processar_grade_cirurgica(file_grade.name)
+        
+        if df is None:
+            print("❌ DataFrame retornado é None")
+            return "Erro ao processar o arquivo. Verifique o formato.", None, None, None
+        
+        print(f"\n✅ Grade processada com sucesso!")
+        print(f"📊 Total de cirurgias: {len(df)}")
+        print(f"📊 Colunas disponíveis: {list(df.columns)}")
+        print(f"\n📋 Primeiras 3 cirurgias:")
+        print(df[['dia', 'sala', 'horario_inicio_time', 'especialidade', 'duracao_minutos']].head(3))
+        
+        slots_totais_por_dia = 10  # 8h às 18h = 10 slots de 1h cada
         grade_slots = []
         
+        # Processar cada combinação dia/sala
         for (dia, sala), grupo in df.groupby(['dia', 'sala']):
             grupo = grupo.dropna(subset=['horario_inicio_time']).sort_values('horario_inicio_time')
-            slots = ['LIVRE'] * slots_totais
             
-            for _, cirurgia in grupo.iterrows():
+            print(f"\n" + "-"*60)
+            print(f"📍 Processando: {dia} - {sala}")
+            print(f"   Total de cirurgias: {len(grupo)}")
+            
+            # Inicializar todos os slots como LIVRE
+            slots = ['LIVRE'] * slots_totais_por_dia
+            
+            # Processar cada cirurgia deste dia/sala
+            for idx_cirurgia, cirurgia in grupo.iterrows():
                 if pd.notna(cirurgia['horario_inicio_time']):
-                    hora_inicio = cirurgia['horario_inicio_time'].hour
-                    minuto_inicio = cirurgia['horario_inicio_time'].minute
-                    slot_inicio = hora_inicio - 8 + (minuto_inicio / 60)
-                    num_slots = int(np.ceil(cirurgia['duracao_minutos'] / 60))
                     
-                    slot_idx = int(slot_inicio)
-                    for i in range(num_slots):
-                        if 0 <= slot_idx + i < slots_totais:
-                            esp_curta = cirurgia['especialidade'][:15]
-                            slots[slot_idx + i] = esp_curta
+                    horario = cirurgia['horario_inicio_time']
+                    duracao = cirurgia['duracao_minutos']
+                    especialidade = str(cirurgia['especialidade'])
+                    
+                    print(f"\n   Cirurgia #{idx_cirurgia}:")
+                    print(f"      Especialidade: {especialidade}")
+                    print(f"      Horário: {horario}")
+                    print(f"      Duração: {duracao} minutos")
+                    
+                    # Calcular em qual slot começa
+                    hora_inicio = horario.hour
+                    minuto_inicio = horario.minute
+                    
+                    # Slot 0 = 8h, Slot 1 = 9h, Slot 2 = 10h, etc.
+                    slot_inicial = hora_inicio - 8
+                    
+                    # Quantos slots de 60min essa cirurgia ocupa
+                    slots_necessarios = int(np.ceil(duracao / 60))
+                    
+                    print(f"      Cálculo:")
+                    print(f"         Hora início: {hora_inicio}h")
+                    print(f"         Slot inicial: {slot_inicial} (posição no array)")
+                    print(f"         Duração em horas: {duracao/60:.2f}h")
+                    print(f"         Slots necessários: {slots_necessarios}")
+                    
+                    # Nome curto para exibição
+                    esp_curta = especialidade[:15]
+                    
+                    # Marcar slots como ocupados
+                    for i in range(slots_necessarios):
+                        idx_slot = slot_inicial + i
+                        
+                        if 0 <= idx_slot < slots_totais_por_dia:
+                            slots[idx_slot] = esp_curta
+                            print(f"         Marcando slot[{idx_slot}] = {esp_curta}")
+                        else:
+                            print(f"         ⚠️ Slot {idx_slot} fora do intervalo válido (0-9)")
             
+            print(f"\n   Resultado final dos slots:")
+            for i, s in enumerate(slots):
+                print(f"      Slot {i} ({8+i}h): {s}")
+            
+            # Adicionar linha à tabela de slots
             grade_slots.append({
-                'Dia': dia, 'Sala': sala,
-                '08h': slots[0], '09h': slots[1], '10h': slots[2], '11h': slots[3], '12h': slots[4],
-                '13h': slots[5], '14h': slots[6], '15h': slots[7], '16h': slots[8], '17h': slots[9]
+                'Dia': dia,
+                'Sala': sala,
+                '08h': slots[0],
+                '09h': slots[1],
+                '10h': slots[2],
+                '11h': slots[3],
+                '12h': slots[4],
+                '13h': slots[5],
+                '14h': slots[6],
+                '15h': slots[7],
+                '16h': slots[8],
+                '17h': slots[9]
             })
         
+        # Criar DataFrame
         df_slots = pd.DataFrame(grade_slots)
         
-        total_slots = len(df_slots) * slots_totais
-        slots_livres = sum([1 for _, row in df_slots.iterrows() 
-                           for hora in ['08h', '09h', '10h', '11h', '12h', '13h', '14h', '15h', '16h', '17h']
-                           if row[hora] == 'LIVRE'])
+        print(f"\n" + "="*60)
+        print(f"✅ GRADE DE SLOTS FINALIZADA")
+        print(f"📊 Total de linhas (dia/sala): {len(df_slots)}")
+        print(f"📋 Preview da grade:")
+        print(df_slots.head())
+        print("="*60 + "\n")
         
-        slots_pequeno = int(slots_livres * 1)
-        slots_medio = int(slots_livres / 2)
-        slots_grande = int(slots_livres / 3)
+        # Contar slots livres e ocupados
+        total_slots = len(df_slots) * slots_totais_por_dia
+        
+        slots_livres = 0
+        slots_ocupados = 0
+        
+        for _, row in df_slots.iterrows():
+            for hora in ['08h', '09h', '10h', '11h', '12h', '13h', '14h', '15h', '16h', '17h']:
+                valor = str(row[hora])
+                if valor == 'LIVRE':
+                    slots_livres += 1
+                else:
+                    slots_ocupados += 1
+        
+        print(f"📊 CONTAGEM FINAL:")
+        print(f"   Total de slots: {total_slots}")
+        print(f"   Slots livres: {slots_livres}")
+        print(f"   Slots ocupados: {slots_ocupados}")
+        print(f"   Taxa de ocupação: {(slots_ocupados/total_slots*100):.1f}%\n")
+        
+        # Calcular capacidade por porte
+        capacidade_pequeno = slots_livres * 1    # 1 cirurgia pequena por slot livre
+        capacidade_medio = int(slots_livres / 2)  # 1 cirurgia média a cada 2 slots
+        capacidade_grande = int(slots_livres / 3) # 1 cirurgia grande a cada 3 slots
         
         disp_slots = pd.DataFrame({
             'Porte': ['Pequeno (60-90min)', 'Médio (120-180min)', 'Grande (240-300min)'],
             'Slots Necessários': [1, 2, 3],
-            'Cirurgias Possíveis': [slots_pequeno, slots_medio, slots_grande]
+            'Cirurgias Possíveis': [capacidade_pequeno, capacidade_medio, capacidade_grande]
         })
         
-        fig = px.bar(disp_slots, x='Porte', y='Cirurgias Possíveis',
-                     title='Capacidade Disponível por Porte de Cirurgia', 
-                     text='Cirurgias Possíveis',
-                     color='Cirurgias Possíveis',
-                     color_continuous_scale=['#dbeafe', '#3b82f6', '#1e3a8a'])
+        # Gráfico de capacidade
+        fig = px.bar(
+            disp_slots, x='Porte', y='Cirurgias Possíveis',
+            title='Capacidade Disponível por Porte de Cirurgia', 
+            text='Cirurgias Possíveis',
+            color='Cirurgias Possíveis',
+            color_continuous_scale=['#dbeafe', '#3b82f6', '#1e3a8a']
+        )
         fig.update_traces(textposition='outside', textfont=dict(size=11))
         fig.update_layout(
             height=450, 
@@ -662,7 +753,11 @@ def criar_grade_com_slots(file_grade):
         <p class="metric-label">Slots Disponíveis</p>
     </div>
     <div class="metric-box">
-        <p class="metric-value">{(total_slots-slots_livres)/total_slots*100:.1f}%</p>
+        <p class="metric-value" style="color: #dc2626;">{slots_ocupados}</p>
+        <p class="metric-label">Slots Ocupados</p>
+    </div>
+    <div class="metric-box">
+        <p class="metric-value">{(slots_ocupados/total_slots*100) if total_slots > 0 else 0:.1f}%</p>
         <p class="metric-label">Taxa de Ocupação</p>
     </div>
 </div>
@@ -683,28 +778,57 @@ def criar_grade_com_slots(file_grade):
                 <td>Pequeno</td>
                 <td>60-90 minutos</td>
                 <td>1 slot</td>
-                <td><strong>{slots_pequeno}</strong></td>
+                <td><strong>{capacidade_pequeno}</strong></td>
             </tr>
             <tr>
                 <td>Médio</td>
                 <td>120-180 minutos</td>
                 <td>2 slots</td>
-                <td><strong>{slots_medio}</strong></td>
+                <td><strong>{capacidade_medio}</strong></td>
             </tr>
             <tr>
                 <td>Grande</td>
                 <td>240-300 minutos</td>
                 <td>3 slots</td>
-                <td><strong>{slots_grande}</strong></td>
+                <td><strong>{capacidade_grande}</strong></td>
             </tr>
         </tbody>
     </table>
+</div>
+
+<div class="alert-info">
+    <h4 style="margin: 0 0 0.5rem 0; color: #1e40af;">Legenda</h4>
+    <p style="margin: 0; color: #1e40af;">
+        <strong>LIVRE:</strong> Slot disponível para alocação de nova cirurgia<br>
+        <strong>Nome da Especialidade:</strong> Slot ocupado com cirurgia já agendada
+    </p>
+</div>
+
+<div class="card">
+    <h3>Interpretação dos Resultados</h3>
+    <p>
+        Com base nos <strong>{slots_livres} slots disponíveis</strong> identificados na grade atual, 
+        o sistema calculou a capacidade máxima de alocação para cada porte de cirurgia:
+    </p>
+    <ul style="margin-top: 1rem; line-height: 1.8;">
+        <li>Até <strong>{capacidade_pequeno} cirurgias de pequeno porte</strong> (60-90 minutos cada)</li>
+        <li>Até <strong>{capacidade_medio} cirurgias de médio porte</strong> (120-180 minutos cada)</li>
+        <li>Até <strong>{capacidade_grande} cirurgias de grande porte</strong> (240-300 minutos cada)</li>
+    </ul>
+    <p style="margin-top: 1rem; color: #6b7280;">
+        <strong>Nota:</strong> Esses números são mutuamente exclusivos. Você pode escolher 
+        uma combinação (ex: 10 pequenas + 5 médias + 2 grandes), respeitando o total de slots disponíveis.
+    </p>
 </div>
         """
         
         return resumo, df_slots, disp_slots, fig
         
     except Exception as e:
+        import traceback
+        erro_completo = traceback.format_exc()
+        print(f"\n❌ ERRO COMPLETO:")
+        print(erro_completo)
         return f"Erro ao processar: {str(e)}", None, None, None
 
 # ============================================
@@ -744,15 +868,16 @@ def processar_fila_cirurgias(file_fila):
 
 def alocar_automaticamente_por_slots(file_grade, file_fila):
     if file_grade is None or file_fila is None:
-        return "Por favor, faça upload de ambos os arquivos.", None
+        return "Por favor, faça upload de ambos os arquivos (Grade e Fila).", None
     
     try:
         df_grade = processar_grade_cirurgica(file_grade.name)
         df_fila = processar_fila_cirurgias(file_fila)
         
         if df_grade is None or df_fila is None:
-            return "Erro ao processar arquivos.", None
+            return "Erro ao processar um dos arquivos.", None
         
+        # Identificar gaps
         gaps = []
         for (dia, sala), grupo in df_grade.groupby(['dia', 'sala']):
             grupo = grupo.dropna(subset=['horario_inicio_time']).sort_values('horario_inicio_time')
@@ -794,6 +919,7 @@ def alocar_automaticamente_por_slots(file_grade, file_fila):
         
         gaps_df = pd.DataFrame(gaps)
         
+        # Alocar cirurgias nos gaps
         alocacoes = []
         
         for idx, cirurgia in df_fila.iterrows():
@@ -858,11 +984,11 @@ def alocar_automaticamente_por_slots(file_grade, file_fila):
     </div>
     <div class="metric-box">
         <p class="metric-value" style="color: #22c55e;">{len(alocacoes_df)}</p>
-        <p class="metric-label">Alocadas</p>
+        <p class="metric-label">Cirurgias Alocadas</p>
     </div>
     <div class="metric-box">
         <p class="metric-value">{len(df_fila)-len(alocacoes_df)}</p>
-        <p class="metric-label">Pendentes</p>
+        <p class="metric-label">Ainda Pendentes</p>
     </div>
     <div class="metric-box">
         <p class="metric-value">{len(alocacoes_df)/len(df_fila)*100:.1f}%</p>
@@ -872,14 +998,20 @@ def alocar_automaticamente_por_slots(file_grade, file_fila):
 
 <div class="card">
     <h3>Resultado da Alocação</h3>
-    <p>De <strong>{len(df_fila)} cirurgias</strong> na fila, <strong>{len(alocacoes_df)}</strong> foram alocadas automaticamente nos gaps disponíveis, resultando em uma taxa de alocação de <strong>{len(alocacoes_df)/len(df_fila)*100:.1f}%</strong>.</p>
-    {f'<p style="color: #dc2626; margin-top: 1rem;"><strong>Atenção:</strong> {len(df_fila)-len(alocacoes_df)} cirurgias não puderam ser alocadas por falta de gaps compatíveis.</p>' if len(df_fila)-len(alocacoes_df) > 0 else ''}
+    <p>
+        De <strong>{len(df_fila)} cirurgias</strong> na fila de espera, 
+        <strong>{len(alocacoes_df)}</strong> foram alocadas automaticamente nos gaps disponíveis, 
+        resultando em uma taxa de alocação de <strong>{len(alocacoes_df)/len(df_fila)*100:.1f}%</strong>.
+    </p>
+    {f'<div class="alert-warning" style="margin-top: 1.5rem;"><p style="margin: 0; color: #92400e;"><strong>Atenção:</strong> {len(df_fila)-len(alocacoes_df)} cirurgias não puderam ser alocadas por falta de gaps compatíveis com suas durações.</p></div>' if len(df_fila)-len(alocacoes_df) > 0 else ''}
 </div>
         """
         
         return resumo, alocacoes_df
         
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return f"Erro: {str(e)}", None
 
 # ============================================
@@ -933,18 +1065,26 @@ def criar_timeline_visual(file_grade):
         resumo = f"""
 <div class="alert-success">
     <h3 style="margin: 0 0 0.5rem 0; color: #166534;">Timeline Gerada</h3>
-    <p style="margin: 0; color: #15803d;">Visualização cronológica de {len(df_gantt)} cirurgias.</p>
+    <p style="margin: 0; color: #15803d;">Visualização cronológica de {len(df_gantt)} cirurgias em formato Gantt.</p>
 </div>
 
 <div class="card">
     <h3>Como Interpretar</h3>
-    <p>Cada barra horizontal representa uma cirurgia. A cor indica a especialidade. Espaços em branco são gaps que podem ser preenchidos com novas cirurgias.</p>
+    <p>
+        Cada barra horizontal representa uma cirurgia programada. A cor indica a especialidade. 
+        Espaços vazios entre as barras são gaps que podem ser preenchidos com novas cirurgias.
+    </p>
+    <p style="margin-top: 1rem;">
+        <strong>Dica:</strong> Passe o mouse sobre as barras para ver detalhes de cada cirurgia.
+    </p>
 </div>
         """
         
         return resumo, fig
         
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return f"Erro: {str(e)}", None
 
 # ============================================
@@ -960,6 +1100,7 @@ def simular_alocacao(file_grade, num_pequeno, num_medio, num_grande):
         if df is None:
             return "Erro ao processar o arquivo.", None
         
+        # Calcular slots livres
         slots_totais = 10
         grade_slots = []
         
@@ -981,6 +1122,7 @@ def simular_alocacao(file_grade, num_pequeno, num_medio, num_grande):
         
         slots_livres = sum(grade_slots)
         
+        # Calcular necessidade
         slots_pequeno_necessarios = num_pequeno * 1
         slots_medio_necessarios = num_medio * 2
         slots_grande_necessarios = num_grande * 3
@@ -1078,6 +1220,8 @@ def simular_alocacao(file_grade, num_pequeno, num_medio, num_grande):
         return resumo, simulacao_df
         
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return f"Erro: {str(e)}", None
 
 # ============================================
@@ -1093,6 +1237,7 @@ def exportar_grade_otimizada(file_grade, file_fila):
         if df_grade is None:
             return "Erro ao processar a grade.", None
         
+        # Se tiver fila, alocar
         if file_fila is not None:
             df_fila = processar_fila_cirurgias(file_fila)
             
@@ -1142,6 +1287,7 @@ def exportar_grade_otimizada(file_grade, file_fila):
                     df_grade = pd.concat([df_grade, pd.DataFrame([nova_linha])], ignore_index=True)
                     gaps_df = gaps_df.drop(gaps_df.index[0])
         
+        # Preparar exportação
         df_export = df_grade.sort_values(['dia', 'sala', 'horario_inicio_time']).copy()
         
         df_export['Horário Início'] = df_export['horario_inicio'].astype(str)
@@ -1154,6 +1300,7 @@ def exportar_grade_otimizada(file_grade, file_fila):
         df_final = df_export[['Dia', 'Sala', 'Horário Início', 'Horário Fim', 
                               'Duração (min)', 'Especialidade']]
         
+        # Gerar Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_final.to_excel(writer, sheet_name='Grade Otimizada', index=False)
@@ -1182,17 +1329,25 @@ def exportar_grade_otimizada(file_grade, file_fila):
             <td>Grade Otimizada</td>
         </tr>
         <tr>
-            <td><strong>Colunas</strong></td>
+            <td><strong>Colunas incluídas</strong></td>
             <td>Dia, Sala, Horário Início, Horário Fim, Duração, Especialidade</td>
         </tr>
+        <tr>
+            <td><strong>Ordenação</strong></td>
+            <td>Por dia, sala e horário</td>
+        </tr>
     </table>
-    <p style="margin-top: 1.5rem; color: #6b7280;">Use o botão de download abaixo para salvar o arquivo em seu computador.</p>
+    <p style="margin-top: 1.5rem; color: #6b7280;">
+        Use o botão de download abaixo para salvar o arquivo em seu computador.
+    </p>
 </div>
         """
         
         return resumo, output
         
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return f"Erro: {str(e)}", None
 
 # ============================================
@@ -1238,7 +1393,7 @@ def treinar_modelo_chmscs(file_grade):
         df_grade = processar_grade_cirurgica(file_grade.name)
         
         if df_grade is None or len(df_grade) < 20:
-            return "Dados insuficientes para treinamento. Mínimo: 20 cirurgias.", None, None, None, None, None, None
+            return "Dados insuficientes para treinamento. Mínimo recomendado: 20 cirurgias.", None, None, None, None, None, None
         
         df_ml = extrair_dados_ml_da_grade(df_grade)
         
@@ -1273,6 +1428,7 @@ def treinar_modelo_chmscs(file_grade):
         analise_esp.columns = ['Média (min)', 'Desvio Padrão', 'Quantidade']
         analise_esp = analise_esp.reset_index().sort_values('Quantidade', ascending=False)
         
+        # Gráficos minimalistas
         fig1 = px.scatter(x=y_test, y=y_pred,
                          labels={'x': 'Duração Real (min)', 'y': 'Duração Prevista (min)'},
                          title='Modelo: Previsões vs Realidade',
@@ -1352,15 +1508,15 @@ def treinar_modelo_chmscs(file_grade):
             <td>{r2:.3f} ({r2*100:.1f}%)</td>
         </tr>
         <tr>
-            <td><strong>Algoritmo</strong></td>
-            <td>Random Forest (100 árvores)</td>
+            <td><strong>Algoritmo utilizado</strong></td>
+            <td>Random Forest (100 árvores de decisão)</td>
         </tr>
         <tr>
-            <td><strong>Dataset</strong></td>
-            <td>Dados reais do CHMSCS</td>
+            <td><strong>Fonte dos dados</strong></td>
+            <td>Grade cirúrgica real do CHMSCS</td>
         </tr>
         <tr>
-            <td><strong>Validação</strong></td>
+            <td><strong>Método de validação</strong></td>
             <td>80% treino / 20% teste</td>
         </tr>
     </table>
@@ -1369,8 +1525,9 @@ def treinar_modelo_chmscs(file_grade):
 <div class="alert-info">
     <h4 style="margin: 0 0 0.5rem 0; color: #1e40af;">Interpretação</h4>
     <p style="margin: 0; color: #1e40af;">
-        O modelo prevê durações com erro médio de <strong>{mae:.1f} minutos</strong> e precisão de <strong>{r2*100:.1f}%</strong>, 
-        permitindo planejamento mais confiável da grade cirúrgica do CHMSCS.
+        O modelo prevê durações cirúrgicas com erro médio de <strong>{mae:.1f} minutos</strong> e 
+        precisão de <strong>{r2*100:.1f}%</strong>, permitindo planejamento mais confiável da grade 
+        cirúrgica do CHMSCS.
     </p>
 </div>
         """
@@ -1378,10 +1535,12 @@ def treinar_modelo_chmscs(file_grade):
         return resumo, df_ml.head(100), importancias, analise_esp, fig1, fig2, fig3
         
     except Exception as e:
+        import traceback
+        print(traceback.format_exc())
         return f"Erro: {str(e)}", None, None, None, None, None, None
 
 # ============================================
-# INTERFACE MINIMALISTA
+# INTERFACE COMPLETA
 # ============================================
 
 with gr.Blocks(
@@ -1395,7 +1554,7 @@ with gr.Blocks(
     css=custom_css
 ) as app:
     
-    # HEADER PROFISSIONAL
+    # HEADER PROFISSIONAL COM LOGOS
     gr.HTML("""
     <div class="header-container">
         <div class="logos-section">
@@ -1410,7 +1569,7 @@ with gr.Blocks(
         <div class="title-section">
             <h1 class="main-title">Sistema de Otimização Cirúrgica</h1>
             <p class="subtitle">Complexo de Saúde de São Caetano do Sul</p>
-            <p class="tagline">Machine Learning · Análise de Dados · Otimização Inteligente</p>
+            <p class="tagline">Machine Learning · Análise de Dados · Otimização Inteligente · Exportação</p>
         </div>
     </div>
     """)
@@ -1422,11 +1581,11 @@ with gr.Blocks(
             gr.HTML("""
             <div style="max-width: 1100px; margin: 0 auto;">
                 
-                <h2 class="section-title">Sistema de Otimização</h2>
+                <h2 class="section-title">Sistema Completo de Otimização</h2>
                 
-                <p style="text-align: center; font-size: 1.1rem; color: #6b7280; max-width: 700px; margin: 0 auto 3rem auto; line-height: 1.7;">
+                <p style="text-align: center; font-size: 1.1rem; color: #6b7280; max-width: 750px; margin: 0 auto 3rem auto; line-height: 1.7;">
                     Plataforma integrada para gestão eficiente do centro cirúrgico, 
-                    utilizando inteligência artificial e análise de dados.
+                    utilizando inteligência artificial, análise de dados e otimização automatizada.
                 </p>
                 
                 <div class="feature-grid">
@@ -1474,7 +1633,8 @@ with gr.Blocks(
                         <li>Navegue até a funcionalidade desejada usando as abas acima</li>
                         <li>Faça upload do arquivo DIMENSIONAMENTO-SALAS-CIRURGICAS-E-ESPECIALIDADES.xlsx</li>
                         <li>Execute a análise ou operação clicando no botão correspondente</li>
-                        <li>Visualize os resultados e exporte quando necessário</li>
+                        <li>Visualize os resultados, tabelas e gráficos gerados</li>
+                        <li>Exporte os resultados quando necessário</li>
                     </ol>
                 </div>
                 
@@ -1482,14 +1642,14 @@ with gr.Blocks(
                     <h4 style="margin: 0 0 0.5rem 0; color: #1e40af;">Segurança e Privacidade</h4>
                     <p style="margin: 0; color: #1e40af;">
                         Todos os dados são processados localmente no servidor. 
-                        Nenhuma informação de pacientes é armazenada ou compartilhada.
+                        Nenhuma informação de pacientes é armazenada permanentemente ou compartilhada externamente.
                     </p>
                 </div>
                 
             </div>
             """)
         
-        # TAB 2: ML
+        # TAB 2: MACHINE LEARNING
         with gr.Tab("Machine Learning"):
             gr.HTML("""
             <div style="max-width: 1200px; margin: 0 auto;">
@@ -1499,11 +1659,12 @@ with gr.Blocks(
                     <h3>Sobre o Modelo</h3>
                     <p>
                         Sistema de Machine Learning que analisa padrões históricos de cirurgias 
-                        do CHMSCS para prever com precisão quanto tempo procedimentos realmente levam.
+                        do CHMSCS para prever com precisão quanto tempo procedimentos similares 
+                        realmente levam na prática.
                     </p>
                     <p style="margin-top: 1rem;">
-                        <strong>Benefícios:</strong> Redução de atrasos, melhor aproveitamento de salas, 
-                        diminuição de custos operacionais e maior satisfação de pacientes e equipes.
+                        <strong>Benefícios:</strong> Redução de atrasos, melhor aproveitamento de salas cirúrgicas, 
+                        diminuição de custos operacionais, maior satisfação de pacientes e equipes médicas.
                     </p>
                 </div>
             </div>
@@ -1565,7 +1726,7 @@ with gr.Blocks(
                             outputs=[output_analise, tabela_dist, tabela_gaps, 
                                     grafico_an1, grafico_an2, grafico_an3])
         
-        # TAB 4: SLOTS
+        # TAB 4: GRADE COM SLOTS
         with gr.Tab("Grade com Slots"):
             gr.HTML("""
             <div style="max-width: 1200px; margin: 0 auto;">
@@ -1575,13 +1736,14 @@ with gr.Blocks(
                     <h3>Sistema de Slots</h3>
                     <p>
                         A grade é dividida em slots de 60 minutos (8h às 18h = 10 slots por dia). 
-                        Esta visualização permite identificar rapidamente onde há capacidade disponível.
+                        Esta visualização permite identificar rapidamente onde há capacidade disponível 
+                        para alocação de novas cirurgias.
                     </p>
                     <table style="margin-top: 1.5rem;">
                         <thead>
                             <tr>
                                 <th>Porte</th>
-                                <th>Duração</th>
+                                <th>Duração Típica</th>
                                 <th>Slots Necessários</th>
                             </tr>
                         </thead>
@@ -1589,17 +1751,17 @@ with gr.Blocks(
                             <tr>
                                 <td>Pequeno</td>
                                 <td>60-90 minutos</td>
-                                <td>1 slot</td>
+                                <td>1 slot (60 min)</td>
                             </tr>
                             <tr>
                                 <td>Médio</td>
                                 <td>120-180 minutos</td>
-                                <td>2 slots</td>
+                                <td>2 slots (120 min)</td>
                             </tr>
                             <tr>
                                 <td>Grande</td>
                                 <td>240-300 minutos</td>
-                                <td>3 slots</td>
+                                <td>3 slots (180 min)</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1612,8 +1774,8 @@ with gr.Blocks(
             
             output_slots = gr.HTML()
             tabela_slots = gr.Dataframe(label="Grade Visual por Slots")
-            tabela_cap = gr.Dataframe(label="Capacidade Disponível")
-            grafico_slots = gr.Plot(label="Capacidade por Porte")
+            tabela_cap = gr.Dataframe(label="Capacidade Disponível por Porte")
+            grafico_slots = gr.Plot(label="Gráfico de Capacidade")
             
             btn_slots.click(fn=criar_grade_com_slots, inputs=[file_slots],
                           outputs=[output_slots, tabela_slots, tabela_cap, grafico_slots])
@@ -1627,12 +1789,13 @@ with gr.Blocks(
                 <div class="card">
                     <h3>Como Funciona</h3>
                     <p>
-                        O sistema identifica gaps na grade e aloca automaticamente as cirurgias da fila 
-                        nos melhores horários disponíveis, otimizando o uso dos slots por porte de cirurgia.
+                        O sistema identifica gaps na grade atual e aloca automaticamente as cirurgias 
+                        da fila de espera nos melhores horários disponíveis, otimizando o uso dos slots 
+                        de acordo com o porte de cada cirurgia.
                     </p>
                     
                     <h4 style="margin-top: 1.5rem; font-size: 1rem; color: #374151;">Formato do Arquivo de Fila</h4>
-                    <p>O arquivo Excel deve conter as colunas: Paciente, Especialidade, Duracao (em minutos).</p>
+                    <p>O arquivo Excel deve conter as colunas: <strong>Paciente</strong>, <strong>Especialidade</strong>, <strong>Duracao</strong> (em minutos).</p>
                 </div>
             </div>
             """)
@@ -1650,7 +1813,7 @@ with gr.Blocks(
                           inputs=[file_grade_aloc, file_fila_aloc],
                           outputs=[output_aloc, tabela_aloc])
         
-        # TAB 6: TIMELINE
+        # TAB 6: TIMELINE VISUAL
         with gr.Tab("Timeline Visual"):
             gr.HTML("""
             <div style="max-width: 1200px; margin: 0 auto;">
@@ -1660,8 +1823,8 @@ with gr.Blocks(
                     <h3>Visualização Gantt</h3>
                     <p>
                         Gráfico de Gantt interativo que mostra todas as cirurgias da grade em formato 
-                        cronológico. Cada barra representa uma cirurgia, cores indicam especialidades, 
-                        e espaços vazios são gaps disponíveis.
+                        cronológico. Cada barra representa uma cirurgia, as cores indicam diferentes 
+                        especialidades, e espaços vazios representam gaps disponíveis para alocação.
                     </p>
                 </div>
             </div>
@@ -1671,7 +1834,7 @@ with gr.Blocks(
             btn_timeline = gr.Button("Gerar Timeline", variant="primary", size="lg")
             
             output_timeline = gr.HTML()
-            grafico_timeline = gr.Plot(label="Timeline Gantt")
+            grafico_timeline = gr.Plot(label="Timeline Gantt Interativa")
             
             btn_timeline.click(fn=criar_timeline_visual,
                              inputs=[file_timeline],
@@ -1686,8 +1849,9 @@ with gr.Blocks(
                 <div class="card">
                     <h3>Teste de Alocação</h3>
                     <p>
-                        Simule diferentes cenários de alocação: "E se eu precisar alocar 5 cirurgias pequenas 
-                        mais 3 médias?" O sistema calcula se há capacidade disponível e quantos slots restarão.
+                        Simule diferentes cenários de alocação antes de implementá-los. 
+                        Por exemplo: "E se eu precisar alocar 5 cirurgias pequenas, 3 médias e 2 grandes?" 
+                        O sistema calculará se há capacidade disponível e quantos slots restarão.
                     </p>
                 </div>
             </div>
@@ -1695,7 +1859,7 @@ with gr.Blocks(
             
             file_sim = gr.File(label="Fazer Upload da Grade Atual", file_types=[".xlsx"])
             
-            gr.Markdown("### Configurar Simulação")
+            gr.Markdown("### Configurar Cenário de Simulação")
             
             with gr.Row():
                 num_peq = gr.Slider(0, 20, 0, 1, label="Cirurgias Pequenas (1 slot cada)")
@@ -1721,14 +1885,14 @@ with gr.Blocks(
                     <h3>Geração de Arquivo Excel</h3>
                     <p>
                         Gera arquivo Excel com a grade otimizada, incluindo cirurgias alocadas 
-                        automaticamente se houver arquivo de fila. O arquivo está pronto para 
-                        implementação imediata.
+                        automaticamente se houver arquivo de fila fornecido. O arquivo gerado está 
+                        pronto para implementação imediata no sistema do hospital.
                     </p>
                     
                     <h4 style="margin-top: 1.5rem; font-size: 1rem; color: #374151;">Arquivos Aceitos</h4>
                     <ul style="line-height: 1.8;">
-                        <li><strong>Grade Atual:</strong> Obrigatório - arquivo de dimensionamento</li>
-                        <li><strong>Fila de Cirurgias:</strong> Opcional - se fornecido, cirurgias serão alocadas automaticamente</li>
+                        <li><strong>Grade Atual:</strong> Obrigatório - arquivo DIMENSIONAMENTO-SALAS-CIRURGICAS-E-ESPECIALIDADES.xlsx</li>
+                        <li><strong>Fila de Cirurgias:</strong> Opcional - se fornecido, as cirurgias serão alocadas automaticamente nos gaps</li>
                     </ul>
                 </div>
             </div>
@@ -1738,7 +1902,7 @@ with gr.Blocks(
                 file_export_grade = gr.File(label="Grade Atual (obrigatório)", file_types=[".xlsx"])
                 file_export_fila = gr.File(label="Fila de Cirurgias (opcional)", file_types=[".xlsx"])
             
-            btn_export = gr.Button("Gerar Arquivo Excel", variant="primary", size="lg")
+            btn_export = gr.Button("Gerar Arquivo Excel Otimizado", variant="primary", size="lg")
             
             output_export = gr.HTML()
             file_download = gr.File(label="Download da Grade Otimizada")
@@ -1764,7 +1928,7 @@ with gr.Blocks(
                     <h3>Funcionalidades do Sistema</h3>
                     
                     <h4 style="margin-top: 1.5rem;">Machine Learning</h4>
-                    <p>Modelo Random Forest treinado com dados reais da grade do CHMSCS para previsão de duração cirúrgica.</p>
+                    <p>Modelo Random Forest treinado com dados reais da grade do CHMSCS para previsão precisa de duração cirúrgica.</p>
                     
                     <h4 style="margin-top: 1.5rem;">Análise + Gaps</h4>
                     <p>Processamento unificado que analisa métricas operacionais e identifica oportunidades de otimização em uma única execução.</p>
@@ -1779,14 +1943,14 @@ with gr.Blocks(
                     <p>Gráfico Gantt interativo para visualização cronológica completa de todas as cirurgias e identificação visual de gaps.</p>
                     
                     <h4 style="margin-top: 1.5rem;">Simulador</h4>
-                    <p>Ferramenta de teste que permite simular diferentes cenários de alocação antes da implementação.</p>
+                    <p>Ferramenta de teste que permite simular diferentes cenários de alocação antes da implementação real.</p>
                     
                     <h4 style="margin-top: 1.5rem;">Exportação</h4>
-                    <p>Download de arquivo Excel com grade otimizada, pronto para uso operacional.</p>
+                    <p>Download de arquivo Excel com grade otimizada, pronto para uso operacional imediato.</p>
                 </div>
                 
                 <div class="card">
-                    <h3>Tecnologias</h3>
+                    <h3>Tecnologias Utilizadas</h3>
                     <table>
                         <thead>
                             <tr>
@@ -1819,6 +1983,11 @@ with gr.Blocks(
                             <tr>
                                 <td>Plotly</td>
                                 <td>Visualizações interativas</td>
+                                <td>Latest</td>
+                            </tr>
+                            <tr>
+                                <td>NumPy</td>
+                                <td>Computação numérica</td>
                                 <td>Latest</td>
                             </tr>
                         </tbody>
